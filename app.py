@@ -1,236 +1,58 @@
-# ============================================================
-# RESEARCHMATE AI - GEMINI ONLY
-# ============================================================
-
-# ============================================================
-# 1. IMPORTS
-# ============================================================
-
 import os
 import uvicorn
 
 from fastapi import FastAPI
 from langserve import add_routes
+
+from langchain_core.tools import tool
 from langchain_core.runnables import RunnableLambda
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.agents import create_agent
+
 from pydantic import BaseModel, Field
 
 
 # ============================================================
-# 2. GOOGLE API KEY
+# 1. GOOGLE API KEY
 # ============================================================
 
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 if not GOOGLE_API_KEY:
     raise ValueError(
-        "GOOGLE_API_KEY is not set. "
-        "Please add GOOGLE_API_KEY in Render Environment Variables."
+        "GOOGLE_API_KEY is not set."
     )
 
 
 # ============================================================
-# 3. GEMINI MODEL
+# 2. GEMMA AGENT CORE
 # ============================================================
 
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
+llm_flash = ChatGoogleGenerativeAI(
+    model="gemma-4-31b-it",
     google_api_key=GOOGLE_API_KEY,
     temperature=0
 )
 
 
 # ============================================================
-# 4. INPUT SCHEMA
+# 3. RESEARCH ANALYSIS TOOL
 # ============================================================
 
-class AgentInput(BaseModel):
-
-    research_topic: str = Field(
-        description="The research topic provided by the student"
-    )
-
-    research_question: str = Field(
-        description="The research question provided by the student"
-    )
-
-    research_goal: str = Field(
-        description="The research goal provided by the student"
-    )
-
-
-# ============================================================
-# 5. TEXT EXTRACTION
-# ============================================================
-
-def extract_text(response):
-
-    if response is None:
-        return ""
-
-    if isinstance(response, str):
-        return response.strip()
-
-    content = getattr(response, "content", None)
-
-    if isinstance(content, str):
-        return content.strip()
-
-    if isinstance(content, list):
-
-        text_parts = []
-
-        for item in content:
-
-            if isinstance(item, str):
-
-                text_parts.append(item)
-
-            elif isinstance(item, dict):
-
-                item_type = item.get("type", "")
-
-                if item_type in [
-                    "thinking",
-                    "reasoning"
-                ]:
-                    continue
-
-                text = item.get("text")
-
-                if text:
-                    text_parts.append(str(text))
-
-                output_text = item.get("output_text")
-
-                if output_text:
-                    text_parts.append(str(output_text))
-
-        return "\n".join(text_parts).strip()
-
-    return str(response).strip()
-
-
-# ============================================================
-# 6. SAFE GEMINI CALL
-# ============================================================
-
-def call_gemini(prompt):
-
-    try:
-
-        response = llm.invoke(prompt)
-
-        result = extract_text(response)
-
-        if result:
-
-            return result
-
-        return (
-            "Gemini returned an empty response. "
-            "Please try again."
-        )
-
-    except Exception as e:
-
-        print("GEMINI ERROR:", str(e))
-
-        return (
-            "Gemini could not generate the research report "
-            "at this moment. Please try again."
-        )
-
-
-# ============================================================
-# 7. RESEARCHMATE AI WORKFLOW
-# ============================================================
-
-def researchmate_workflow(input_data):
-
-    try:
-
-        # ----------------------------------------------------
-        # Read Input
-        # ----------------------------------------------------
-
-        if isinstance(input_data, AgentInput):
-
-            research_topic = (
-                input_data.research_topic.strip()
-            )
-
-            research_question = (
-                input_data.research_question.strip()
-            )
-
-            research_goal = (
-                input_data.research_goal.strip()
-            )
-
-        elif isinstance(input_data, dict):
-
-            research_topic = str(
-                input_data.get(
-                    "research_topic",
-                    ""
-                )
-            ).strip()
-
-            research_question = str(
-                input_data.get(
-                    "research_question",
-                    ""
-                )
-            ).strip()
-
-            research_goal = str(
-                input_data.get(
-                    "research_goal",
-                    ""
-                )
-            ).strip()
-
-        else:
-
-            return (
-                "Invalid input. Please provide "
-                "research_topic, research_question "
-                "and research_goal."
-            )
-
-
-        # ----------------------------------------------------
-        # Validate Input
-        # ----------------------------------------------------
-
-        if not research_topic:
-
-            return "Please enter a research topic."
-
-        if not research_question:
-
-            return "Please enter a research question."
-
-        if not research_goal:
-
-            return "Please enter a research goal."
-
-
-        # ----------------------------------------------------
-        # ResearchMate AI Prompt
-        # ----------------------------------------------------
-
-        prompt = f"""
-You are ResearchMate AI, an intelligent academic research
-assistant.
-
-Your job is to help a student understand a research topic,
-analyze existing approaches, identify research gaps, compare
-possible solutions, and recommend a practical research
-methodology.
-
-The student has provided:
+@tool
+def research_analysis(
+    research_topic: str,
+    research_question: str,
+    research_goal: str
+) -> str:
+    """
+    Analyze a research topic, question and goal
+    and generate a structured research analysis.
+    """
+
+    prompt = f"""
+
+You are an expert academic research assistant.
 
 RESEARCH TOPIC:
 {research_topic}
@@ -241,344 +63,577 @@ RESEARCH QUESTION:
 RESEARCH GOAL:
 {research_goal}
 
+Analyze the research problem carefully.
 
-============================================================
-RESEARCHMATE AI WORKFLOW
-============================================================
+Provide the following:
 
-Follow these stages internally.
+1. RESEARCH PROBLEM
+Clearly explain the problem being studied.
 
-STAGE 1 - RESEARCH UNDERSTANDING
+2. EXISTING KNOWLEDGE
+Explain the general existing approaches,
+methods or technologies related to the topic.
+
+3. RESEARCH GAP
+Identify limitations, challenges or areas
+that can be improved.
+
+4. PROPOSED APPROACH
+Suggest a practical methodology or approach
+that could address the research gap.
+
+5. EXPECTED OUTCOME
+Explain what the research is expected to achieve.
+
+6. FINAL RESEARCH SUMMARY
+Give a short summary connecting the topic,
+question, goal, gap and proposed approach.
+
+IMPORTANT:
+
+- Do not invent specific research papers,
+authors, statistics or experimental results.
+- Do not claim that something is proven unless
+  it is clearly supported by the information given.
+- Use general academic knowledge.
+- Keep the explanation understandable to a
+  college student.
+- Return normal readable text.
+- Do not return JSON.
+- Do not return Python dictionaries.
+- Do not use Markdown code fences.
+"""
+
+    try:
+
+        response = llm_flash.invoke(
+            prompt
+        )
+
+        content = response.content
+
+        if isinstance(
+            content,
+            str
+        ):
+
+            return content.strip()
+
+        return str(content)
+
+    except Exception as e:
+
+        return (
+            "Research analysis failed: "
+            + str(e)
+        )
+
+
+# ============================================================
+# 4. TOOLS AVAILABLE TO GEMMA
+# ============================================================
+
+tools = [
+    research_analysis
+]
+
+
+# ============================================================
+# 5. RESEARCHMATE AI AGENT
+# ============================================================
+
+system_prompt = """
+
+You are ResearchMate AI.
+
+You are an AI research assistant designed to
+help college students understand and develop
+research ideas.
+
+The student provides only:
+
+1. Research Topic
+2. Research Question
+3. Research Goal
+
+
+YOUR WORKFLOW:
+
+STEP 1:
 
 Understand the research topic.
 
-Explain:
+STEP 2:
 
-- What the research area is
-- Why the topic is important
-- Where it is commonly used
-- What problem the research is trying to solve
+Understand the research question.
 
+STEP 3:
 
-STAGE 2 - EXISTING APPROACHES
+Understand the research goal.
 
-Identify the important existing technical approaches related
-to the topic.
+STEP 4:
 
-For every important approach explain:
+Use the Research Analysis tool to analyze
+the research idea.
 
-- Basic idea
-- How it works
-- Advantages
-- Limitations
-- Typical use cases
+STEP 5:
+
+Present the final research analysis in a
+simple academic format.
 
 
-STAGE 3 - APPROACH COMPARISON
+IMPORTANT:
 
-Compare the important approaches.
+Do not ask the student for additional information.
 
-Consider:
+Do not expose internal reasoning.
 
-- Accuracy
-- Performance
-- Complexity
-- Computational requirements
-- Data requirements
-- Scalability
-- Real-world applicability
+Do not expose tool calls.
 
-Do not invent numerical results.
+Do not output JSON.
 
+Do not output Python dictionaries.
 
-STAGE 4 - RESEARCH GAP IDENTIFICATION
-
-Identify realistic research gaps.
-
-Consider:
-
-- Technical limitations
-- Accuracy limitations
-- Dataset limitations
-- Generalization problems
-- Computational limitations
-- Real-world implementation problems
-- Lack of robustness
-- Possible improvements
-
-Clearly distinguish between:
-
-EXISTING KNOWLEDGE
-
-and
-
-PROPOSED RESEARCH IDEAS.
+Do not invent research papers, authors,
+statistics or experimental results.
 
 
-STAGE 5 - PROPOSED METHODOLOGY
-
-Based on the research question, research goal and identified
-gaps, recommend a practical methodology.
-
-Include:
-
-1. Problem definition
-2. Data collection
-3. Data preprocessing
-4. Feature/model selection
-5. Proposed technical approach
-6. Training or implementation
-7. Evaluation
-8. Baseline comparison
-9. Expected contribution
-
-
-STAGE 6 - EXPECTED CONTRIBUTION
-
-Explain what the proposed research could contribute.
-
-Do not claim that the contribution has already been proven.
-
-
-STAGE 7 - LIMITATIONS
-
-Mention realistic limitations of the proposed research.
-
-
-STAGE 8 - FINAL CONCLUSION
-
-Give a concise academic conclusion connecting:
-
-Research Topic
-+
-Research Question
-+
-Research Goal
-+
-Research Gap
-+
-Proposed Methodology
-
-
-============================================================
-IMPORTANT ACCURACY RULES
-============================================================
-
-You do NOT have live web search in this version.
-
-Therefore:
-
-- Do not claim that you searched the internet.
-- Do not claim that you searched Google Scholar.
-- Do not invent research papers.
-- Do not invent authors.
-- Do not invent DOI numbers.
-- Do not invent URLs.
-- Do not invent datasets.
-- Do not invent experimental results.
-- Do not invent accuracy percentages.
-- Do not present proposed results as actual results.
-
-Use your general academic knowledge.
-
-If you are uncertain about a specific fact, describe it
-generally instead of fabricating a citation.
-
-
-============================================================
-FINAL OUTPUT FORMAT
-============================================================
-
-Return ONLY the following report.
+FINAL RESPONSE FORMAT:
 
 RESEARCHMATE AI REPORT
 
 Research Topic:
-{research_topic}
 
 Research Question:
-{research_question}
 
 Research Goal:
-{research_goal}
+
+Research Problem:
+
+Existing Knowledge:
+
+Research Gap:
+
+Proposed Approach:
+
+Expected Outcome:
+
+Final Research Summary:
 
 
-1. Research Overview
+The explanation must be simple enough for
+a college student to understand.
 
-Explain the research area and importance.
-
-
-2. Existing Approaches
-
-Explain the major existing approaches.
-
-
-3. Approach Comparison
-
-Compare the approaches and explain their strengths
-and weaknesses.
-
-
-4. Research Gaps
-
-Identify realistic research gaps.
-
-
-5. Recommended Methodology
-
-Give the proposed methodology step by step.
-
-
-6. Expected Contribution
-
-Explain the expected contribution.
-
-
-7. Limitations
-
-Explain realistic limitations.
-
-
-8. Conclusion
-
-Give a concise academic conclusion.
-
-
-Use clear, simple academic English suitable for a
-B.Tech/CSE student research project.
-
-Do not include internal reasoning.
-Do not include tool calls.
-Do not include JSON.
-Do not include Markdown code blocks.
+Use clear paragraphs and bullet points where
+useful.
 """
 
 
-        # ----------------------------------------------------
-        # Gemini Processing
-        # ----------------------------------------------------
-
-        print("\n========================================")
-        print("RESEARCHMATE AI STARTED")
-        print("========================================")
-
-        print(
-            "Research Topic:",
-            research_topic
-        )
-
-        result = call_gemini(prompt)
-
-
-        # ----------------------------------------------------
-        # Final Output
-        # ----------------------------------------------------
-
-        print("\n========================================")
-        print("RESEARCHMATE AI COMPLETED")
-        print("========================================")
-
-        return result
-
-
-    except Exception as e:
-
-        print(
-            "WORKFLOW ERROR:",
-            str(e)
-        )
-
-        return (
-            "ResearchMate AI encountered an unexpected error. "
-            "Please check your Google API key and try again."
-        )
-
-
 # ============================================================
-# 8. LANGSERVE CHAIN
+# 6. CREATE LANGCHAIN AGENT
 # ============================================================
 
-researchmate_chain = (
-    RunnableLambda(
-        researchmate_workflow
-    )
-).with_types(
-    input_type=AgentInput,
-    output_type=str
+agent = create_agent(
+
+    model=llm_flash,
+
+    tools=tools,
+
+    system_prompt=system_prompt
+
 )
 
 
 # ============================================================
-# 9. FASTAPI APPLICATION
+# 7. INPUT SCHEMA
+# ============================================================
+
+class AgentInput(BaseModel):
+
+    research_topic: str = Field(
+        description=(
+            "The research topic"
+        )
+    )
+
+    research_question: str = Field(
+        description=(
+            "The main research question"
+        )
+    )
+
+    research_goal: str = Field(
+        description=(
+            "The main goal of the research"
+        )
+    )
+
+
+# ============================================================
+# 8. FORMAT INPUT FOR GEMMA AGENT
+# ============================================================
+
+def format_for_agent(x) -> dict:
+
+    if isinstance(x, dict):
+
+        research_topic = x.get(
+            "research_topic",
+            ""
+        )
+
+        research_question = x.get(
+            "research_question",
+            ""
+        )
+
+        research_goal = x.get(
+            "research_goal",
+            ""
+        )
+
+    else:
+
+        research_topic = getattr(
+            x,
+            "research_topic",
+            ""
+        )
+
+        research_question = getattr(
+            x,
+            "research_question",
+            ""
+        )
+
+        research_goal = getattr(
+            x,
+            "research_goal",
+            ""
+        )
+
+
+    user_input = f"""
+
+RESEARCHMATE AI INPUT
+
+==================================================
+RESEARCH TOPIC
+==================================================
+
+{research_topic}
+
+
+==================================================
+RESEARCH QUESTION
+==================================================
+
+{research_question}
+
+
+==================================================
+RESEARCH GOAL
+==================================================
+
+{research_goal}
+
+
+==================================================
+TASK
+==================================================
+
+Analyze this research idea.
+
+Identify:
+
+1. Research Problem
+2. Existing Knowledge
+3. Research Gap
+4. Proposed Approach
+5. Expected Outcome
+6. Final Research Summary
+
+Return the final research report as
+clear readable text.
+"""
+
+
+    return {
+
+        "messages": [
+
+            (
+                "user",
+                user_input
+            )
+
+        ]
+
+    }
+
+
+# ============================================================
+# 9. EXTRACT FINAL TEXT
+# ============================================================
+
+def extract_text_response(
+    agent_output
+) -> str:
+
+    if isinstance(
+        agent_output,
+        str
+    ):
+
+        return agent_output.strip()
+
+
+    if not isinstance(
+        agent_output,
+        dict
+    ):
+
+        return str(agent_output)
+
+
+    messages = agent_output.get(
+        "messages"
+    )
+
+
+    if messages is None:
+
+        for value in agent_output.values():
+
+            if (
+                isinstance(
+                    value,
+                    dict
+                )
+                and
+                "messages" in value
+            ):
+
+                messages = value[
+                    "messages"
+                ]
+
+                break
+
+
+    if not messages:
+
+        return (
+            "No final research report "
+            "was generated."
+        )
+
+
+    for message in reversed(
+        messages
+    ):
+
+        if message.__class__.__name__ != "AIMessage":
+
+            continue
+
+
+        content = getattr(
+            message,
+            "content",
+            ""
+        )
+
+
+        if isinstance(
+            content,
+            str
+        ):
+
+            text = content.strip()
+
+            if text:
+
+                return text
+
+
+        if isinstance(
+            content,
+            list
+        ):
+
+            text_parts = []
+
+
+            for item in content:
+
+                if isinstance(
+                    item,
+                    dict
+                ):
+
+                    item_type = item.get(
+                        "type",
+                        ""
+                    )
+
+
+                    if item_type in {
+                        "thinking",
+                        "reasoning"
+                    }:
+
+                        continue
+
+
+                    if item_type in {
+                        "text",
+                        "output_text"
+                    }:
+
+                        text = item.get(
+                            "text",
+                            ""
+                        )
+
+                        if text:
+
+                            text_parts.append(
+                                text
+                            )
+
+                elif isinstance(
+                    item,
+                    str
+                ):
+
+                    text_parts.append(
+                        item
+                    )
+
+
+            final_text = "\n".join(
+                text_parts
+            ).strip()
+
+
+            if final_text:
+
+                return final_text
+
+
+    return (
+        "No readable research report "
+        "was generated."
+    )
+
+
+# ============================================================
+# 10. LANGSERVE CHAIN
+# ============================================================
+
+formatted_agent_chain = (
+
+    RunnableLambda(
+        format_for_agent
+    )
+
+    | agent
+
+    | RunnableLambda(
+        extract_text_response
+    )
+
+).with_types(
+
+    input_type=AgentInput,
+
+    output_type=str
+
+)
+
+
+# ============================================================
+# 11. FASTAPI APPLICATION
 # ============================================================
 
 app = FastAPI(
-    title="ResearchMate AI",
-    description=(
-        "Gemini-powered Agentic AI Research Assistant "
-        "for academic research analysis."
+
+    title=(
+        "ResearchMate AI API"
     ),
-    version="1.0.0"
+
+    version="1.0",
+
+    description=(
+        "ResearchMate AI using "
+        "LangChain, Gemma-4-31B-IT, "
+        "FastAPI and LangServe."
+    )
+
 )
 
 
 # ============================================================
-# 10. LANGSERVE ROUTE
+# 12. LANGSERVE ROUTER
 # ============================================================
 
 add_routes(
+
     app,
-    researchmate_chain,
+
+    formatted_agent_chain,
+
     path="/research-agent"
+
 )
 
 
 # ============================================================
-# 11. HOME ROUTE
+# 13. HOME ENDPOINT
 # ============================================================
 
 @app.get("/")
 def home():
 
     return {
-        "message": "ResearchMate AI is running.",
-        "model": "gemini-2.5-flash",
-        "service": "Gemini-only",
-        "endpoint": "/research-agent",
-        "playground": "/research-agent/playground/",
-        "status": "ready"
+
+        "message":
+            "ResearchMate AI is running.",
+
+        "agent_core":
+            "gemma-4-31b-it",
+
+        "endpoint":
+            "/research-agent",
+
+        "playground":
+            "/research-agent/playground/"
+
     }
 
 
 # ============================================================
-# 12. HEALTH CHECK
-# ============================================================
-
-@app.get("/health")
-def health():
-
-    return {
-        "status": "healthy",
-        "service": "ResearchMate AI",
-        "model": "gemini-2.5-flash"
-    }
-
-
-# ============================================================
-# 13. RUN APPLICATION
+# 14. RUN APPLICATION
 # ============================================================
 
 if __name__ == "__main__":
 
     port = int(
+
         os.environ.get(
             "PORT",
             8000
         )
+
     )
 
     uvicorn.run(
+
         "app:app",
+
         host="0.0.0.0",
+
         port=port
+
     )
